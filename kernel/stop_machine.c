@@ -58,6 +58,8 @@ static void cpu_stop_signal_done(struct cpu_stop_done *done, bool executed)
 			done->executed = true;
 		if (atomic_dec_and_test(&done->nr_todo))
 			complete(&done->completion);
+		if(suspend_enter_flag)
+			printk("cpu_stop_signal_done executed=%x nr_todo=%d\n",executed ,atomic_read(&done->nr_todo));
 	}
 }
 
@@ -171,7 +173,8 @@ static DEFINE_PER_CPU(struct cpu_stop_work, stop_cpus_work);
 #define MAXIMAL_CPU_ID   (8)
 volatile unsigned int cpux_wake_up[MAXIMAL_CPU_ID]={0};
 volatile unsigned int cpux_wake_up_fail[MAXIMAL_CPU_ID]={0};
-#define STOP_CPU_TIMEOUT  (HZ * 2);
+#define STOP_CPU_TIMEOUT  (HZ * 4)
+#define STOP_MECHANISM_TIMEOUT  (HZ * 3)
 static void stop_cpu_timeout(unsigned long data)
 {
 	unsigned int cpu;
@@ -252,12 +255,22 @@ int __stop_cpus(const struct cpumask *cpumask, cpu_stop_fn_t fn, void *arg)
 				    &per_cpu(stop_cpus_work, cpu));
 	}
 	preempt_enable();
+
+	if(suspend_enter_flag){
+		printk("__stop_cpus: wait_for_completion_timeout+\n");
+		if(0== wait_for_completion_timeout(&done.completion,STOP_CPU_TIMEOUT+(HZ/2) ) ){
+			printk("[warnning timeout] __stop_cpus: wait_for_completion_timeout \n" );
+			stop_cpu_timeout((unsigned long)cpumask);
+		}
+
+	}
+	else
 	wait_for_completion(&done.completion);
 
 	if(suspend_enter_flag){
+		printk("__stop_cpus: smp=%u done.executed=%u done.ret =%u-\n",smp_processor_id(),done.executed , done.ret );
 		del_timer_sync(&timer);
 		destroy_timer_on_stack(&timer);
-		printk("__stop_cpus: smp=%u done.executed=%u done.ret =%u-\n",smp_processor_id(),done.executed , done.ret );
 	}
 	return done.executed ? done.ret : -ENOENT;
 }
@@ -531,8 +544,10 @@ static int stop_machine_cpu_stop(void *data)
 	bool is_active;
 	unsigned long end_time;
 
-	if ( suspend_enter_flag)
-		end_time=jiffies+2*STOP_CPU_TIMEOUT ;
+	if ( suspend_enter_flag){
+		printk("stop_machine_cpu_stop cpu=%u\n",cpu);
+		end_time=jiffies+STOP_MECHANISM_TIMEOUT ;
+	}
 
 	if (!smdata->active_cpus)
 		is_active = cpu == cpumask_first(cpu_online_mask);

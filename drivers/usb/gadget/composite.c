@@ -41,7 +41,7 @@
 
 extern char * desc_interface_name;
 static struct usb_composite_driver *composite;
-
+static int is_switch_work_initialized = 0;
 /* Some systems will need runtime overrides for the  product identifers
  * published in the device descriptor, either numbers or strings or both.
  * String parameters are in UTF-8 (superset of ASCII's 7 bit characters).
@@ -1149,7 +1149,11 @@ static void composite_disconnect(struct usb_gadget *gadget)
 		composite->disconnect(cdev);
 
 	cdev->connected = 0;
-	schedule_work(&cdev->switch_work);
+	/*
+	 *  Invoke the function schedule_work only when the switch_work is initialized to avoid the null pointer accessing.
+	 */
+	if(is_switch_work_initialized == 1)
+		schedule_work(&cdev->switch_work);
 	spin_unlock_irqrestore(&cdev->lock, flags);
 }
 
@@ -1318,6 +1322,7 @@ static int composite_bind(struct usb_gadget *gadget)
 	if (status < 0)
 		goto fail;
 	INIT_WORK(&cdev->switch_work, composite_switch_work);
+	is_switch_work_initialized = 1;
 
 	cdev->desc = *composite->dev;
 	cdev->desc.bMaxPacketSize0 = gadget->ep0->maxpacket;

@@ -2622,11 +2622,8 @@ int __init mi5140_sensor_yuv_late_init(void)
     }
     else
     {
-      if (ASUSGetProjectID() == 101)
-      {
-        printk("101: default using OV5640\n");
+        printk("default using OV5640\n");
         tegra_camera_set_caminfo(0,1);
-      }
     }
     info->i2c_client->addr=0x3d;
   }

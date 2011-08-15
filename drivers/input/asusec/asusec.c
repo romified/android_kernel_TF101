@@ -1405,7 +1405,11 @@ static void asusec_work_function(struct work_struct *dat)
 	if (ec_chip->wakeup_lcd){
 		if (gpio_get_value(TEGRA_GPIO_PS4)){
 			ec_chip->wakeup_lcd = 0;
-			ec_chip->dock_in = gpio_get_value(TEGRA_GPIO_PX5) ? 0 : 1;
+			if (ASUSGetProjectID()==101){
+				ec_chip->dock_in = gpio_get_value(TEGRA_GPIO_PX5) ? 0 : 1;
+			} else if (ASUSGetProjectID()==102){
+				ec_chip->dock_in = 1;
+			}
 			wake_lock_timeout(&ec_chip->wake_lock, 3*HZ);
 			msleep(500);
 		}
@@ -1827,8 +1831,14 @@ static int asusec_resume(struct i2c_client *client){
 	printk("asusec_resume+\n");
 
 	ec_chip->suspend_state = 0;
-	asusec_dock_info_update();
-	asusec_dock_status_check();
+	if (ASUSGetProjectID()==101){
+		asusec_dock_info_update();
+		asusec_dock_status_check();
+	} else if (ASUSGetProjectID()==102){
+		ec_chip->init_success = 0;
+		wake_lock(&ec_chip->wake_lock_init);
+		queue_delayed_work(asusec_wq, &ec_chip->asusec_dock_init_work, 0);
+	}
 
 	printk("asusec_resume-\n");
 	return 0;	
@@ -1860,7 +1870,7 @@ static ssize_t asusec_switch_name(struct switch_dev *sdev, char *buf)
 static ssize_t asusec_switch_state(struct switch_dev *sdev, char *buf)
 {
 	if (ASUSGetProjectID() == 101) {
-		return sprintf(buf, "%s\n", (ec_chip->dock_in ? "10" : "0"));
+		return sprintf(buf, "%s\n", (ec_chip->dock_in && ec_chip->init_success ? "10" : "0"));
 	} else {
 		return sprintf(buf, "%s\n", "0");
 	}

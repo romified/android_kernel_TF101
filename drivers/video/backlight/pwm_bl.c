@@ -135,6 +135,24 @@ void PowerOffSeqForChargingMode()
 }
 EXPORT_SYMBOL(PowerOffSeqForChargingMode);
 
+void ForceSetBrightness(int brightness)
+{
+	if((brightness >= 0) && (brightness <= 255)) {
+		printk("pwm_bl: Force set brightness: %d\n", brightness);
+		pwm_config(pwm_bl_for_charge->pwm,
+			brightness* pwm_bl_for_charge->period / 255,
+			pwm_bl_for_charge->period);
+		pwm_enable(pwm_bl_for_charge->pwm);
+
+		/* HSD: TP6= 10ms~ */
+		msleep(10);
+
+		gpio_set_value(ventana_bl_enb, 1);
+	} else
+		printk("pwm_bl: Invalid brightness, %d\n", brightness);
+}
+EXPORT_SYMBOL(ForceSetBrightness);
+
 static int pwm_backlight_update_status(struct backlight_device *bl)
 {
 	struct pwm_bl_data *pb = dev_get_drvdata(&bl->dev);
@@ -143,12 +161,12 @@ static int pwm_backlight_update_status(struct backlight_device *bl)
 
 	if (bl->props.power != FB_BLANK_UNBLANK) {
 		printk("Can't update brightness 'cause of \"bl->props.power != FB_BLANK_UNBLANK\"\n");
-		brightness = 0;
+		/* brightness = 0; */
 	}
 
 	if (bl->props.fb_blank != FB_BLANK_UNBLANK) {
 		printk("Can't update brightness 'cause of \"bl->props.fb_blank != FB_BLANK_UNBLANK\"\n");
-		brightness = 0;
+		/* brightness = 0; */
 	}
 
 	if (brightness == 0) {

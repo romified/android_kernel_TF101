@@ -39,6 +39,13 @@
 #ifdef OV5640_DELAY_TEST
 static u32 ov5640_init_delay= 150;
 #endif
+#define _ENABLE_WRITE_TABLE_2_GROUP_LATCH_
+#define _AVOID_GROUP_LATCH_AFTER_SET_MODE_
+//#undef _AVOID_GROUP_LATCH_AFTER_SET_MODE_
+#ifdef _AVOID_GROUP_LATCH_AFTER_SET_MODE_
+#define _AVOID_GROUP_LATCH_TIME_MS_ 200
+static int g_last_set_mode_jiffies;
+#endif
 #define SENSOR_WIDTH_REG 0x2703
 #define SENSOR_640_WIDTH_VAL 0x0280
 #define OV5640_SENSOR_NAME "ov5640"
@@ -8796,34 +8803,54 @@ static struct sensor_reg mode_2592x1944[] = {
 #endif
 
 static struct sensor_reg_2 ColorEffect_None[] = {
-{SENSOR_MASK_BYTE_WRITE, 0x5001, 0x00 , 0x00},
-{SENSOR_MASK_BYTE_WRITE, 0x5580, 0x00 , 0x58},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xdf},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x00},
+//{SENSOR_MASK_BYTE_WRITE, 0x5580, 0x00 , 0x58},
+{SENSOR_BYTE_WRITE, 0x5580, 0x00},
 {SENSOR_BYTE_WRITE, 0x5583, 0x40},
 {SENSOR_BYTE_WRITE, 0x5584, 0x30},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xff},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x10},
+//{SENSOR_BYTE_WRITE, 0x3212, 0xa0},
 {SENSOR_TABLE_END, 0x0000}
 };
 
 static struct sensor_reg_2 ColorEffect_Mono[] = {
-{SENSOR_MASK_BYTE_WRITE,0x5001, 0x80, 0x80},
-{SENSOR_MASK_BYTE_WRITE,0x5580, 0x18, 0x58},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xdf},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x00},
+//{SENSOR_MASK_BYTE_WRITE,0x5580, 0x18, 0x58},
+{SENSOR_BYTE_WRITE, 0x5580, 0x00},
 {SENSOR_BYTE_WRITE, 0x5583, 0x80},
 {SENSOR_BYTE_WRITE, 0x5584, 0x80},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xff},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x10},
+//{SENSOR_BYTE_WRITE, 0x3212, 0xa0},
 {SENSOR_TABLE_END, 0x0000}
 };
 
 static struct sensor_reg_2 ColorEffect_Sepia[] = {
-{SENSOR_MASK_BYTE_WRITE,0x5001, 0x80, 0x80},
-{SENSOR_MASK_BYTE_WRITE,0x5580, 0x18, 0x58},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xdf},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x00},
+//{SENSOR_MASK_BYTE_WRITE,0x5580, 0x18, 0x58},
+{SENSOR_BYTE_WRITE, 0x5580, 0x00},
 {SENSOR_BYTE_WRITE, 0x5583, 0x40},
 {SENSOR_BYTE_WRITE, 0x5584, 0xa0},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xff},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x10},
+//{SENSOR_BYTE_WRITE, 0x3212, 0xa0},
 {SENSOR_TABLE_END, 0x0000}
 };
 
 static struct sensor_reg_2 ColorEffect_Negative[] = {
-{SENSOR_MASK_BYTE_WRITE,0x5001, 0x80, 0x80},
-{SENSOR_MASK_BYTE_WRITE,0x5580, 0x40, 0x58},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xdf},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x00},
+//{SENSOR_MASK_BYTE_WRITE,0x5580, 0x40, 0x58},
+{SENSOR_BYTE_WRITE, 0x5580, 0x00},
 {SENSOR_BYTE_WRITE, 0x5583, 0x40},
 {SENSOR_BYTE_WRITE, 0x5584, 0x40},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xff},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x10},
+//{SENSOR_BYTE_WRITE, 0x3212, 0xa0},
 {SENSOR_TABLE_END, 0x0000}
 };
 
@@ -8879,35 +8906,50 @@ static struct sensor_reg_2 Whitebalance_Auto[] = {
 };
 
 static struct sensor_reg_2 Whitebalance_Incandescent[] = {
-{SENSOR_MASK_BYTE_WRITE, 0x3406, 0x1, 0x1},//;Man En},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xdf},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x01},
+{SENSOR_BYTE_WRITE, 0x3406, 0x1},//;Man En},
 {SENSOR_BYTE_WRITE, 0x3400, 0x4}, //  ;R Gain},
 {SENSOR_BYTE_WRITE, 0x3401, 0x10},
 {SENSOR_BYTE_WRITE, 0x3402, 0x4} ,//  ;G Gain},
 {SENSOR_BYTE_WRITE, 0x3403, 0x0},
 {SENSOR_BYTE_WRITE, 0x3404, 0x8}, //  ;B Gain},
 {SENSOR_BYTE_WRITE, 0x3405, 0x40},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xff},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x11},
+//{SENSOR_BYTE_WRITE, 0x3212, 0xa1},
 {SENSOR_TABLE_END, 0x0000}
 };
 
 static struct sensor_reg_2 Whitebalance_Daylight[] = {
-{SENSOR_MASK_BYTE_WRITE, 0x3406, 0x1, 0x1}, //;Man En},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xdf},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x01},
+{SENSOR_BYTE_WRITE, 0x3406, 0x1}, //;Man En},
 {SENSOR_BYTE_WRITE, 0x3400, 0x6}, //  ;R Gain},
 {SENSOR_BYTE_WRITE, 0x3401, 0x1c},
 {SENSOR_BYTE_WRITE, 0x3402, 0x4}, //  ;G Gain},
 {SENSOR_BYTE_WRITE, 0x3403, 0x0},
 {SENSOR_BYTE_WRITE, 0x3404, 0x4}, //  ;B Gain},
 {SENSOR_BYTE_WRITE, 0x3405, 0xf3},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xff},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x11},
+//{SENSOR_BYTE_WRITE, 0x3212, 0xa1},
 {SENSOR_TABLE_END, 0x0000}
 };
 
 static struct sensor_reg_2 Whitebalance_Fluorescent[] = {
-{SENSOR_MASK_BYTE_WRITE, 0x3406, 0x1, 0x1}, //;Man En},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xdf},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x01},
+{SENSOR_BYTE_WRITE, 0x3406, 0x1}, //;Man En},
 {SENSOR_BYTE_WRITE, 0x3400, 0x5}, //  ;R Gain},
 {SENSOR_BYTE_WRITE, 0x3401, 0x48},
 {SENSOR_BYTE_WRITE, 0x3402, 0x4}, //  ;G Gain},
 {SENSOR_BYTE_WRITE, 0x3403, 0x0},
 {SENSOR_BYTE_WRITE, 0x3404, 0x7}, //  ;B Gain},
 {SENSOR_BYTE_WRITE, 0x3405, 0xcf},
+//{SENSOR_BYTE_WRITE, 0x3004, 0xff},
+//{SENSOR_BYTE_WRITE, 0x3212, 0x11},
+//{SENSOR_BYTE_WRITE, 0x3212, 0xa1},
 {SENSOR_TABLE_END, 0x0000}
 };
 
@@ -9177,11 +9219,34 @@ static int sensor_write_table_2(struct i2c_client *client,
 	int err;
 	const struct sensor_reg_2 *next;
 	u16 val,mask;
+  int b_group_latch=1;
+
+#ifdef _AVOID_GROUP_LATCH_AFTER_SET_MODE_
+  if ((jiffies - g_last_set_mode_jiffies) > (HZ * _AVOID_GROUP_LATCH_TIME_MS_ / 1000) )
+  {
+    printk("do group latch: jiffies=%d, last_set_mode_jiffies=%d, threshold=%d\n",
+     jiffies, g_last_set_mode_jiffies , (HZ * _AVOID_GROUP_LATCH_TIME_MS_ / 1000)
+     );
+    b_group_latch=1;
+  }
+  else
+  {
+    printk("skip group latch: jiffies=%d, last_set_mode_jiffies=%d, threshold=%d\n",
+     jiffies, g_last_set_mode_jiffies , (HZ * _AVOID_GROUP_LATCH_TIME_MS_ / 1000)
+     );
+    b_group_latch=0;
+  }
+#endif
 
 	pr_info("yuv %s\n",__func__);
+#ifdef _ENABLE_WRITE_TABLE_2_GROUP_LATCH_
+    if (b_group_latch) {
+	err = sensor_write_reg(client, 0x3004, 0xdf);//;Disable MCU clock
 	err = sensor_write_reg(client, 0x3212, 0x00);//;Enable group0
 	if (err)
-		return err;
+  		return err;
+	}
+#endif
 	for (next = table; next->cmd != SENSOR_TABLE_END; next++) {
 		if (next->cmd == SENSOR_WAIT_MS) {
 			msleep(next->val);
@@ -9228,12 +9293,22 @@ static int sensor_write_table_2(struct i2c_client *client,
 
     }
 	}
+#ifdef _ENABLE_WRITE_TABLE_2_GROUP_LATCH_
+    if (b_group_latch) {
+	err = sensor_write_reg(client, 0x3004, 0xff);//;Enable MCU clock
 	err = sensor_write_reg(client, 0x3212, 0x10);//;End group0
 	if (err)
 		return err;
 	err = sensor_write_reg(client, 0x3212, 0xa0);//;latch group0
 	if (err)
 		return err;
+	}
+	//group_latch = 1;
+#endif
+	//msleep(100);
+#ifdef _AVOID_GROUP_LATCH_AFTER_SET_MODE_
+  g_last_set_mode_jiffies = jiffies;
+#endif
 	return 0;
 }
 
@@ -9373,16 +9448,30 @@ static long sensor_ioctl(struct file *file,
 
       switch(coloreffect)
       {
+        u16 val;
         case YUV_ColorEffect_None:
+          //group_latch = 0;
+          err = sensor_read_reg(info->i2c_client, 0x5580,&val);
+          val = (val & ~(0x58)) | 0x00;
+          ColorEffect_None[0].val = val;
           err = sensor_write_table_2(info->i2c_client, ColorEffect_None);
           break;
         case YUV_ColorEffect_Mono:
+          err = sensor_read_reg(info->i2c_client, 0x5580,&val);
+          val = (val & ~(0x58)) | 0x18;
+          ColorEffect_Mono[0].val = val;
           err = sensor_write_table_2(info->i2c_client, ColorEffect_Mono);
           break;
         case YUV_ColorEffect_Sepia:
+          err = sensor_read_reg(info->i2c_client, 0x5580,&val);
+          val = (val & ~(0x58)) | 0x18;
+          ColorEffect_Sepia[0].val = val;
           err = sensor_write_table_2(info->i2c_client, ColorEffect_Sepia);
           break;
         case YUV_ColorEffect_Negative:
+          err = sensor_read_reg(info->i2c_client, 0x5580,&val);
+          val = (val & ~(0x58)) | 0x40;
+          ColorEffect_Negative[0].val = val;
           err = sensor_write_table_2(info->i2c_client, ColorEffect_Negative);
           break;
         case YUV_ColorEffect_Solarize:

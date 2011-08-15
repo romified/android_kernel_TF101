@@ -39,6 +39,9 @@
 #include <linux/gpio.h>
 #include <../arch/arm/mach-tegra/gpio-names.h>
 #include <mach/board-ventana-misc.h>
+#include <linux/poll.h>
+#include <linux/kfifo.h>
+#include <linux/version.h>
 
 /*
  * This is a driver for the Atmel maXTouch Object Protocol
@@ -371,6 +374,494 @@ static u8 mxt_valid_interrupt_dummy(void)
 {
 	return 1;
 }
+#define DBG_MODULE	0x00000001
+#define DBG_CDEV	0x00000002
+#define DBG_PROC	0x00000004
+#define DBG_PARSER	0x00000020
+#define DBG_SUSP	0x00000040
+#define DBG_CONST	0x00000100
+#define DBG_IDLE	0x00000200
+#define DBG_WAKEUP	0x00000400
+static unsigned int DbgLevel = DBG_MODULE|DBG_SUSP| DBG_CDEV|DBG_PROC;
+#define TOUCH_DBG(level, fmt, args...)  { if( (level&DbgLevel)>0 ) \
+					printk( KERN_DEBUG "[touch_char]: " fmt, ## args); }
+
+struct touch_char_dev
+{
+	int OpenCnts;
+	struct cdev cdev;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	struct kfifo* pCharKFiFo;
+	spinlock_t CharFiFoLock;
+#else
+	struct kfifo CharKFiFo;
+#endif
+	unsigned char *pFiFoBuf;
+	struct semaphore sem;
+	wait_queue_head_t fifo_inq;
+};
+static int global_major = 0; // dynamic major by default 
+static int global_minor = 0;
+static struct touch_char_dev *p_char_dev = NULL;	// allocated in probe
+static atomic_t touch_char_available = ATOMIC_INIT(1);
+static atomic_t wait_command_ack = ATOMIC_INIT(0);
+static struct class *touch_class;
+// ioctl command
+#define TOUCH_SELFTEST_CMD  1
+// number 2 is curse number. 
+#define TOUCH_READ_T28_DATA  3
+#define TOUCH_WRITE_T28_CMD  4
+#define TOUCH_WRITE_T6_DIAGNOSTIC 5
+#define TOUCH_READ_T37_OBJECT  6
+
+#define FIFO_SIZE		PAGE_SIZE
+static unsigned int mTouchCharCmd = -1; 
+
+static int touch_cdev_open(struct inode *inode, struct file *filp)
+{
+	struct touch_char_dev *cdev;
+       /*
+       if(p_touch_serial_dev == NULL){
+	     printk("[touch_char]: No touch char device!\n");
+	     return -ENODEV;	
+	}
+	*/     
+	   
+	cdev = container_of(inode->i_cdev, struct touch_char_dev, cdev);
+	if( cdev == NULL )
+	{
+        	TOUCH_DBG(DBG_CDEV, " No such char device node \n");
+		return -ENODEV;
+	}
+	
+	if( !atomic_dec_and_test(&touch_char_available) )
+	{
+		atomic_inc(&touch_char_available);
+		return -EBUSY; /* already open */
+	}
+
+	cdev->OpenCnts++;
+	filp->private_data = cdev;// Used by the read and write metheds
+	TOUCH_DBG(DBG_CDEV, " CDev open done!\n");
+	try_module_get(THIS_MODULE);
+	return 0;
+}
+
+static int touch_cdev_release(struct inode *inode, struct file *filp)
+{
+	struct touch_char_dev *cdev; // device information
+
+	cdev = container_of(inode->i_cdev, struct touch_char_dev, cdev);
+        if( cdev == NULL )
+        {
+                TOUCH_DBG(DBG_CDEV, " No such char device node \n");
+                return -ENODEV;
+        }
+
+	atomic_inc(&touch_char_available); /* release the device */
+
+	filp->private_data = NULL;
+	cdev->OpenCnts--;
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	kfifo_reset( cdev->pCharKFiFo );
+#else
+	kfifo_reset( &cdev->CharKFiFo );
+#endif
+	TOUCH_DBG(DBG_CDEV, " CDev release done!\n");
+	module_put(THIS_MODULE);
+	return 0;
+}
+
+#define MAX_READ_BUF_LEN	50
+static char fifo_read_buf[MAX_READ_BUF_LEN];
+static ssize_t touch_cdev_read(struct file *file, char __user *buf, size_t count, loff_t *offset)
+{
+	int read_cnt, ret, fifoLen;
+	struct touch_char_dev *cdev = file->private_data;
+	 u8 temp[130];
+	
+	if( down_interruptible(&cdev->sem) )
+		return -ERESTARTSYS;
+
+	if(mTouchCharCmd > 0){
+	    switch(mTouchCharCmd){
+	    case TOUCH_READ_T28_DATA:
+	              mxt_read_block(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_CTECONFIG_T28, globe_mxt), 6, temp);
+	              TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_READ_T28_DATA\n");
+	              ret = copy_to_user(buf, temp, 6) ? -EFAULT : 6;
+			 mTouchCharCmd = 0;
+			 up(&cdev->sem);
+	              return ret;
+	    case TOUCH_READ_T37_OBJECT:
+	             mxt_read_block(globe_mxt->client, MXT_BASE_ADDR(MXT_DEBUG_DIAGNOSTIC_T37, globe_mxt), 130, temp);
+			TOUCH_DBG(DBG_CDEV, " Execute command: MXT_DEBUG_DIAGNOSTIC_T37\n");
+			ret = copy_to_user(buf, temp, 130) ? -EFAULT : 130;
+			mTouchCharCmd = 0;
+			up(&cdev->sem);
+			return ret;
+	    }
+	}   
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	fifoLen = kfifo_len(cdev->pCharKFiFo);
+#else
+	fifoLen = kfifo_len(&cdev->CharKFiFo);
+#endif
+
+	while( fifoLen<1 ) /* nothing to read */
+	{
+		up(&cdev->sem); /* release the lock */
+		if( file->f_flags & O_NONBLOCK )
+			return -EAGAIN;
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+		if( wait_event_interruptible(cdev->fifo_inq, kfifo_len( cdev->pCharKFiFo )>0) )
+	#else
+		if( wait_event_interruptible(cdev->fifo_inq, kfifo_len( &cdev->CharKFiFo )>0) )
+	#endif
+		{
+			return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
+		}
+		if( down_interruptible(&cdev->sem) )
+			return -ERESTARTSYS;
+
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	      fifoLen = kfifo_len(cdev->pCharKFiFo);
+      #else
+	      fifoLen = kfifo_len(&cdev->CharKFiFo);
+      #endif
+	}
+
+	if(count > MAX_READ_BUF_LEN)
+		count = MAX_READ_BUF_LEN;
+
+	TOUCH_DBG(DBG_CDEV, " \"%s\" reading: real fifo data\n", current->comm);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	read_cnt = kfifo_get(cdev->pCharKFiFo, fifo_read_buf, count);
+#else
+	read_cnt = kfifo_out(&cdev->CharKFiFo, fifo_read_buf, count);
+#endif
+
+	ret = copy_to_user(buf, fifo_read_buf, read_cnt)?-EFAULT:read_cnt;
+
+	up(&cdev->sem);
+	
+	return ret;
+}
+
+static ssize_t touch_cdev_write(struct file *file, const char __user *buf, size_t count, loff_t *offset)
+{
+	struct touch_char_dev *cdev = file->private_data;
+	int ret=0, written=0;
+	unsigned char c;
+      
+	if( down_interruptible(&cdev->sem) )
+		return -ERESTARTSYS;
+	TOUCH_DBG(DBG_CDEV, "Start Write the SIGLIM value.\n", written);
+	if(globe_mxt == NULL) 
+	{
+		ret = -ENODEV;
+		goto out;
+	}
+
+	if(count > 4) // for four byte T25 HI/LO  SIGLIM 
+		count = 4;
+	
+	while(count--) {
+		if(get_user(c, buf++)) 
+		{
+			ret = -EFAULT;
+			goto out;
+		}
+	      // write T25 HISIGLIM/LOSIGLIM
+	      TOUCH_DBG(DBG_CDEV, "T25[%d] =  0X%02X\n", (written + 2), c);
+		if(mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_SELFTEST_T25, globe_mxt) + 2+ written , c)) 
+		{
+			ret = -EIO;
+			goto out;
+		}
+		written++;
+	};
+
+out:
+	up(&cdev->sem);
+	TOUCH_DBG(DBG_CDEV, " SIGLIM writing %d bytes.\n", written);
+
+	if(ret!=0)
+		return ret;
+	else
+		return written;
+}
+
+
+
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
+static int touch_cdev_ioctl (struct inode *inode, struct file *file, unsigned int cmd, unsigned long args)
+{	
+	struct touch_char_dev *cdev = file->private_data;
+	int ret=0;
+	TOUCH_DBG(DBG_CDEV, " Handle device ioctl command version 36\n");  
+	if(globe_mxt == NULL)
+		return -EFAULT;
+      
+	u8 cmd_code = args & 0xFFUL;  
+	switch (cmd)
+	{
+		case TOUCH_SELFTEST_CMD:
+			// start the test
+			//mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_USER_INFO_T38, globe_mxt), 0);
+	             //msleep(25);
+			 mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_SELFTEST_T25, globe_mxt) + 0, 0x03);
+			 mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_SELFTEST_T25, globe_mxt) + 1, cmd_code);
+		       TOUCH_DBG(DBG_CDEV, " Start the self test with byte: %X\n", cmd_code);
+			break;
+		case TOUCH_READ_T28_DATA:
+			mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_CTECONFIG_T28, globe_mxt), 0x0);
+			TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_READ_T28_DATA\n");
+			break;
+		case TOUCH_WRITE_T28_CMD:
+			mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_CTECONFIG_T28, globe_mxt) + 1, cmd_code);
+			TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_WRITE_T28_CMD 0x%02X\n", cmd_code);
+			break;
+		case TOUCH_WRITE_T6_DIAGNOSTIC:
+			mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_GEN_COMMANDPROCESSOR_T6, globe_mxt) + MXT_ADR_T6_DIAGNOSTIC, cmd_code);
+			TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_WRITE_T6_DIAGNOSTIC 0x%02X\n", cmd_code);
+			break;
+		case TOUCH_READ_T37_OBJECT:
+			TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_READ_T37_OBJECT\n");
+			break;
+		default:
+			ret = -ENOTTY;
+			break;
+	}
+       mTouchCharCmd = cmd;
+	return ret;
+}
+
+#else
+static int touch_cdev_ioctl (struct file *file, unsigned int cmd, unsigned long args)
+{	
+	struct touch_char_dev *cdev = file->private_data;
+	int ret=0;
+	TOUCH_DBG(DBG_CDEV, " Handle device ioctl command version 36\n");  
+	if(globe_mxt == NULL)
+		return -EFAULT;
+      
+	u8 cmd_code = args & 0xFFUL;  
+	switch (cmd)
+	{
+		case TOUCH_SELFTEST_CMD:
+			// start the test
+			//mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_USER_INFO_T38, globe_mxt), 0);
+	             //msleep(25);
+			 mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_SELFTEST_T25, globe_mxt) + 0, 0x03);
+			 mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_SELFTEST_T25, globe_mxt) + 1, cmd_code);
+		       TOUCH_DBG(DBG_CDEV, " Start the self test with byte: %X\n", cmd_code);
+			break;
+		case TOUCH_READ_T28_DATA:
+			mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_CTECONFIG_T28, globe_mxt), 0x0);
+			TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_READ_T28_DATA\n");
+			break;
+		case TOUCH_WRITE_T28_CMD:
+			mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_SPT_CTECONFIG_T28, globe_mxt) + 1, cmd_code);
+			TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_WRITE_T28_CMD 0x%02X\n", cmd_code);
+			break;
+		case TOUCH_WRITE_T6_DIAGNOSTIC:
+			mxt_write_byte(globe_mxt->client, MXT_BASE_ADDR(MXT_GEN_COMMANDPROCESSOR_T6, globe_mxt) + MXT_ADR_T6_DIAGNOSTIC, cmd_code);
+			TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_WRITE_T6_DIAGNOSTIC 0x%02X\n", cmd_code);
+			break;
+		case TOUCH_READ_T37_OBJECT:
+			TOUCH_DBG(DBG_CDEV, " Execute command: TOUCH_READ_T37_OBJECT\n");
+			break;
+		default:
+			ret = -ENOTTY;
+			break;
+	}
+       mTouchCharCmd = cmd;
+	return ret;
+}
+#endif
+
+static unsigned int touch_cdev_poll(struct file *filp, struct poll_table_struct *wait)
+{
+	struct touch_char_dev *cdev = filp->private_data;
+	unsigned int mask = 0;
+	int fifoLen;
+	
+	down(&cdev->sem);
+	poll_wait(filp, &cdev->fifo_inq,  wait);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	fifoLen = kfifo_len(cdev->pCharKFiFo);
+#else
+	fifoLen = kfifo_len(&cdev->CharKFiFo);
+#endif
+
+	if( fifoLen > 0 )
+		mask |= POLLIN | POLLRDNORM;    /* readable */
+	if( (FIFO_SIZE - fifoLen) > 0 )
+		mask |= POLLOUT | POLLWRNORM;   /* writable */
+
+	up(&cdev->sem);
+	return mask;
+}
+
+
+static const struct file_operations touch_cdev_fops = {
+	.owner	= THIS_MODULE,
+	.read	= touch_cdev_read,
+	.write	= touch_cdev_write,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
+      .ioctl=touch_cdev_ioctl,
+#else 
+      .unlocked_ioctl=touch_cdev_ioctl, 
+#endif
+	.poll	= touch_cdev_poll,
+	.open	= touch_cdev_open,
+	.release= touch_cdev_release,
+};
+
+static struct touch_char_dev* setup_chardev(dev_t dev)
+{
+	struct touch_char_dev *pCharDev;
+	int result;
+
+	pCharDev = kmalloc(1*sizeof(struct touch_char_dev), GFP_KERNEL);
+	if(!pCharDev) 
+		goto fail_cdev;
+	memset(pCharDev, 0, sizeof(struct touch_char_dev));
+
+	pCharDev->pFiFoBuf = kmalloc(sizeof(unsigned char)*FIFO_SIZE, GFP_KERNEL);
+	if(!pCharDev->pFiFoBuf)
+		goto fail_fifobuf;
+	memset(pCharDev->pFiFoBuf, 0, sizeof(unsigned char)*FIFO_SIZE);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	spin_lock_init( &pCharDev->CharFiFoLock );
+	pCharDev->pCharKFiFo = kfifo_init(pCharDev->pFiFoBuf, FIFO_SIZE, GFP_KERNEL, &pCharDev->CharFiFoLock);
+	if( pCharDev->pCharKFiFo==NULL )
+		goto fail_kfifo;
+#else
+	kfifo_init(&pCharDev->CharKFiFo, pCharDev->pFiFoBuf, FIFO_SIZE);
+	if( !kfifo_initialized(&pCharDev->CharKFiFo) )
+		goto fail_kfifo;
+#endif
+	
+	pCharDev->OpenCnts = 0;
+	cdev_init(&pCharDev->cdev, &touch_cdev_fops);
+	pCharDev->cdev.owner = THIS_MODULE;
+	sema_init(&pCharDev->sem, 1);
+	init_waitqueue_head(&pCharDev->fifo_inq);
+
+	result = cdev_add(&pCharDev->cdev, dev, 1);
+	if(result)
+	{
+		TOUCH_DBG(DBG_MODULE, " Failed at cdev added\n");
+		goto fail_kfifo;
+	}
+
+	return pCharDev; 
+
+fail_kfifo:
+	kfree(pCharDev->pFiFoBuf);
+fail_fifobuf:
+	kfree(pCharDev);
+fail_cdev:
+	return NULL;
+}
+
+static void exit_touch_char_dev(void)
+{
+	dev_t devno = MKDEV(global_major, global_minor);
+	
+	TOUCH_DBG(DBG_MODULE, " Exit driver ...\n");
+
+	if(p_char_dev)
+	{
+		if( p_char_dev->pFiFoBuf )
+			kfree(p_char_dev->pFiFoBuf);
+	
+		cdev_del(&p_char_dev->cdev);
+		kfree(p_char_dev);
+		p_char_dev = NULL;
+	}
+
+	unregister_chrdev_region( devno, 1);
+
+	if(!IS_ERR(touch_class))
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+		class_device_destroy(touch_class, devno);
+#else
+		device_destroy(touch_class, devno);
+#endif 
+		class_destroy(touch_class);
+	}
+/*
+	if(input_dev)
+	{
+		input_unregister_device(input_dev);
+		input_dev = NULL;
+	}
+
+	serio_unregister_driver(&touch_serio_drv);
+*/
+	TOUCH_DBG(DBG_MODULE, " Exit driver done!\n");
+}
+
+static int init_touch_char_dev(void){
+       int result;
+	dev_t devno = 0;
+
+	TOUCH_DBG(DBG_MODULE, " Driver init ...\n");
+
+	// Asking for a dynamic major unless directed otherwise at load time.
+	if(global_major) 
+	{
+		devno = MKDEV(global_major, global_minor);
+		result = register_chrdev_region(devno, 1, "touch_debug");
+	} 
+	else 
+	{
+		result = alloc_chrdev_region(&devno, global_minor, 1, "touch_debug");
+		global_major = MAJOR(devno);
+	}
+
+	if (result < 0)
+	{
+		TOUCH_DBG(DBG_MODULE, " Cdev can't get major number\n");
+		return 0;
+	}
+
+	// allocate the character device
+	p_char_dev = setup_chardev(devno);
+	if(!p_char_dev) 
+	{
+		result = -ENOMEM;
+		goto fail;
+	}
+
+	touch_class = class_create(THIS_MODULE, "touch_debug");
+	if(IS_ERR(touch_class))
+	{
+		TOUCH_DBG(DBG_MODULE, " Failed in creating class.\n");
+		result = -EFAULT;
+		goto fail;
+	}
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+	class_device_create(touch_class, NULL, devno, NULL, "touch_debug");
+#else
+	device_create(touch_class, NULL, devno, NULL, "touch_debug");
+#endif
+	TOUCH_DBG(DBG_MODULE, " Register touch_debug cdev, major: %d \n",global_major);
+
+      TOUCH_DBG(DBG_MODULE, " Driver init done!\n");
+	return 0;
+      fail:	
+	exit_touch_char_dev();
+	return result;
+}
 
 static ssize_t store_d_print(struct device *dev, struct device_attribute *devattr,const char *buf, size_t count)
 {
@@ -538,12 +1029,23 @@ static ssize_t store_mode2(struct device *dev, struct device_attribute *devattr,
 	return count;
 }
 
+static ssize_t show_TP_vendor(struct device *dev, struct device_attribute *devattr, char *buf)
+{
+      if(ASUSCheckTouchVendor(TOUCH_VENDOR_SINTEK))
+	    sprintf(buf,"%d\n", TOUCH_VENDOR_SINTEK);
+      else 
+	    sprintf(buf,"%d\n", TOUCH_VENDOR_WINTEK);
+
+	return strlen(buf);
+}
+
 DEVICE_ATTR(cfg_ep101, S_IRUGO | S_IWUSR, NULL, store_mode2);
 DEVICE_ATTR(d_print, S_IRUGO | S_IWUSR, NULL, store_d_print);
 DEVICE_ATTR(atmel_touchpanel_status, 0755, show_status, NULL);
 DEVICE_ATTR(FW_version, 0755, show_FW_version, NULL);
 DEVICE_ATTR(dump_T7, 0755, dump_T7, NULL);
 DEVICE_ATTR(dump_T22_ep101, 0755, dump_T22, NULL);
+DEVICE_ATTR(TP_vendor, 0755, show_TP_vendor, NULL);
 
 static struct attribute *mxt_attr[] = {
 	&dev_attr_d_print.attr,
@@ -552,6 +1054,7 @@ static struct attribute *mxt_attr[] = {
 	&dev_attr_dump_T22_ep101.attr,
 	&dev_attr_FW_version.attr,
 	&dev_attr_cfg_ep101.attr,
+	&dev_attr_TP_vendor.attr,
 	NULL
 };
 ssize_t debug_data_read(struct mxt_data *mxt, char *buf, size_t count,
@@ -2043,7 +2546,14 @@ int process_message(u8 *message, u8 object, struct mxt_data *mxt)
 	case MXT_SPT_SELFTEST_T25:
 		if (debug >= DEBUG_TRACE)
 			dev_info(&client->dev, "Receiving Self-Test msg\n");
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+		    kfifo_put(p_char_dev->pCharKFiFo, message, 7);
+                 TOUCH_DBG(DBG_CDEV, " Get the new T25 data with bytes %d \n", kfifo_len(p_char_dev->pCharKFiFo));
+#else
+		    kfifo_in(&p_char_dev->CharKFiFo, message, 7);
+                 TOUCH_DBG(DBG_CDEV, " Get the new T25 data with bytes %d \n", kfifo_len(&p_char_dev->CharKFiFo));
+#endif
+		    wake_up_interruptible( &p_char_dev->fifo_inq );
 		if (message[MXT_MSG_T25_STATUS] == MXT_MSGR_T25_OK) {
 			if (debug >= DEBUG_TRACE)
 				dev_info(&client->dev,
@@ -2961,6 +3471,8 @@ static int __devinit mxt_probe(struct i2c_client *client,
 
 	mxt->msg_buffer_startp = 0;
 	mxt->msg_buffer_endp = 0;
+	  // add the touch char device
+      init_touch_char_dev();  
 
 	/* Allocate the interrupt */
 	mxt_debug(DEBUG_TRACE, "maXTouch driver allocating interrupt...\n");
@@ -3078,6 +3590,7 @@ static int __devexit mxt_remove(struct i2c_client *client)
 		kfree(mxt->last_message);
 	}
 	sysfs_remove_group(&client->dev.kobj, &mxt->attrs);
+	exit_touch_char_dev(); // remove the char device
 	kfree(mxt);
 
 	i2c_set_clientdata(client, NULL);

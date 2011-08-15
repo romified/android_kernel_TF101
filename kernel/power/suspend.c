@@ -24,7 +24,6 @@
 #include <linux/suspend.h>
 #include <linux/smp.h>
 #include "power.h"
-
 #include <mach/iomap.h>
 
 #define TIMER_PTV	0x0
@@ -70,7 +69,7 @@ int suspend_enter_flag=0;
 extern struct timer_list suspend_timer;
 extern  void suspend_worker_timeout(unsigned long data);
 
-extern const char *const pm_states[PM_SUSPEND_MAX] = {
+const char *const pm_states[PM_SUSPEND_MAX] = {
 #ifdef CONFIG_EARLYSUSPEND
 	[PM_SUSPEND_ON]		= "on",
 #endif
@@ -155,6 +154,7 @@ static int suspend_prepare(void)
 	suspend_timer.function = suspend_worker_timeout;
 	add_timer(&suspend_timer);
 	watchdog_enable(44);
+
 	error = suspend_freeze_processes();
 	watchdog_disable();
 	del_timer_sync(&suspend_timer);
@@ -164,6 +164,7 @@ static int suspend_prepare(void)
 	suspend_timer.function = suspend_worker_timeout;
 	add_timer(&suspend_timer);
 	watchdog_enable(11);
+
 	if (!error)
 		return 0;
 
@@ -193,7 +194,6 @@ void __attribute__ ((weak)) arch_suspend_enable_irqs(void)
  *
  *	This function should be called after devices have been suspended.
  */
-
 static int suspend_enter(suspend_state_t state)
 {
 	int error;
@@ -246,13 +246,7 @@ static int suspend_enter(suspend_state_t state)
 	BUG_ON(irqs_disabled());
 
  Enable_cpus:
-	init_timer_on_stack(&timer);
-	timer.expires = jiffies + HZ * 4;
-	timer.function = disable_nonboot_cpus_timeout;
-	add_timer(&timer);
 	enable_nonboot_cpus();
-      del_timer_sync(&timer);
-      destroy_timer_on_stack(&timer);
  Platform_wake:
 	if (suspend_ops->wake)
 		suspend_ops->wake();
@@ -301,7 +295,9 @@ int suspend_devices_and_enter(suspend_state_t state)
 	dpm_resume_end(PMSG_RESUME);
 	suspend_test_finish("resume devices");
 	pm_restore_gfp_mask();
+	printk("PM: resume_console+\n");
 	resume_console();
+	printk("PM: resume_console-\n");
  Close:
 	if (suspend_ops->end)
 		suspend_ops->end();
@@ -321,10 +317,12 @@ int suspend_devices_and_enter(suspend_state_t state)
  */
 static void suspend_finish(void)
 {
+	printk("suspend_finish+\n");
 	suspend_thaw_processes();
 	usermodehelper_enable();
 	pm_notifier_call_chain2(PM_POST_SUSPEND);
 	pm_restore_console();
+	printk("suspend_finish-\n");
 }
 
 /**

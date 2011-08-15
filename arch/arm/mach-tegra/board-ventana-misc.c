@@ -32,7 +32,10 @@ static struct kobj_attribute module##_attr = { \
 	.show = module##_show, \
 }
 unsigned int ventana_hw;
-
+/* This flag is set when there is an invalid ext4 partition,
+ * init daemon will format data partition when it cannot mount data
+ * and this flag is also true.*/
+extern int ventana_ext4_invalid;
 //Chip unique ID is a maximum of 17 characters including NULL termination.
 unsigned char ventana_chipid[17];
 EXPORT_SYMBOL(ventana_chipid);
@@ -135,6 +138,16 @@ unsigned int ASUSCheckTouchVendor(unsigned int vendor)
 	return ret;
 }
 EXPORT_SYMBOL(ASUSCheckTouchVendor);
+
+static ssize_t ventana_ext4_invalid_show(struct kobject *kobj,
+        struct kobj_attribute *attr, char *buf)
+{
+        char *s = buf;
+
+        s += sprintf(s, "%01u\n", ventana_ext4_invalid);
+
+        return (s - buf);
+}
 
 static ssize_t ventana_hw_show(struct kobject *kobj,
 	struct kobj_attribute *attr, char *buf)
@@ -247,6 +260,7 @@ VENTANA_MISC_ATTR(ventana_hw);
 VENTANA_MISC_ATTR(ventana_chipid);
 VENTANA_MISC_ATTR(ventana_projectid);
 VENTANA_MISC_ATTR(ventana_fuse_reservedodm);
+VENTANA_MISC_ATTR(ventana_ext4_invalid);
 
 static struct kobj_attribute ventana_debug_attr = {
 	.attr = {
@@ -262,6 +276,7 @@ static struct attribute *attr_list[] = {
 	&ventana_projectid_attr.attr,
 	&ventana_fuse_reservedodm_attr.attr,
 	&ventana_debug_attr.attr,
+        &ventana_ext4_invalid_attr.attr,
 	NULL,
 };
 

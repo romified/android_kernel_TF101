@@ -685,8 +685,10 @@ static void platform_pm_complete(struct device *dev)
 {
 	struct device_driver *drv = dev->driver;
 
-	if (drv && drv->pm && drv->pm->complete)
+	if (drv && drv->pm && drv->pm->complete){
+		printk("drv->pm->complete=%pF\n",drv->pm->complete);
 		drv->pm->complete(dev);
+	}
 }
 
 #else /* !CONFIG_PM_SLEEP */

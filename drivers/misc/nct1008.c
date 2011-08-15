@@ -160,7 +160,7 @@ static irqreturn_t nct1008_irq(int irq, void *dev_id)
 {
 	struct nct1008_data *data = dev_id;
 	schedule_work(&data->work);
-
+	printk("[Warning] nct1008_irq was trigged\n");
 	return IRQ_HANDLED;
 }
 

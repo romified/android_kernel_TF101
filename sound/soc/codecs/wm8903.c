@@ -415,8 +415,8 @@ extern bool lineout_alive;
 extern int mic_type;
 int PRJ_ID;
 EXPORT_SYMBOL(PRJ_ID);
-int spk_status;
-EXPORT_SYMBOL(spk_status);
+bool boot_finish=false;
+EXPORT_SYMBOL(boot_finish);
 
 struct wm8903_parameters audio_params[]={
 	/* EP101 */
@@ -2373,9 +2373,10 @@ int audio_codec_ioctl(struct file *filp,
 			break;
 
 		case OUTPUT_POWER_CONTROL:
+			if(!boot_finish)
+				boot_finish = true;
 			if(arg==AUDIO_POWER_ON && need_spk && !lineout_alive){
 			printk("AUDIO_CODEC: Power On\n");
-			spk_status = ENABLE_SPEAKER;
 			snd_soc_write(global_codec, WM8903_POWER_MANAGEMENT_4, 0x0003); /* MIXSPK Enable*/
 			if(PRJ_ID == EP_101){
 			snd_soc_write(global_codec, WM8903_ANALOGUE_OUT3_LEFT, audio_params[EP101].analog_speaker_volume | 0x80); /* SPKL Volume: 4dB*/
@@ -2388,7 +2389,6 @@ int audio_codec_ioctl(struct file *filp,
 			snd_soc_write(global_codec, WM8903_GPIO_CONTROL_3, 0x0033); /* GPIO3 configure: EN_SPK*/
 			}else if(arg==AUDIO_POWER_OFF){
 			printk("AUDIO_CODEC: Power Off\n");
-			spk_status = DISABLE_SPEAKER;
 			snd_soc_write(global_codec, WM8903_POWER_MANAGEMENT_4, 0x0000); /* MIXSPK Disable*/
 			snd_soc_write(global_codec, WM8903_POWER_MANAGEMENT_5, 0x0000); /* SPK Disable*/
 			snd_soc_write(global_codec, WM8903_GPIO_CONTROL_3, 0x0000); /* Mute the speaker */

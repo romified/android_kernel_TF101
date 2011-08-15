@@ -494,7 +494,9 @@ void dpm_resume_noirq(pm_message_t state)
 		}
 	mutex_unlock(&dpm_list_mtx);
 	dpm_show_time(starttime, state, "early");
+	printk("dpm_resume_noirq resume_device_irqs+\n");
 	resume_device_irqs();
+	printk("\ndpm_resume_noirq resume_device_irqs-\n");
 }
 EXPORT_SYMBOL_GPL(dpm_resume_noirq);
 
@@ -709,6 +711,7 @@ static void device_complete(struct device *dev, pm_message_t state)
  * Execute the ->complete() callbacks for all devices whose PM status is not
  * DPM_ON (this allows new devices to be registered).
  */
+ struct device *temp_dev=NULL;
 static void dpm_complete(pm_message_t state)
 {
 	struct list_head list;
@@ -718,7 +721,7 @@ static void dpm_complete(pm_message_t state)
 	transition_started = false;
 	while (!list_empty(&dpm_list)) {
 		struct device *dev = to_device(dpm_list.prev);
-
+		temp_dev=dev;
 		get_device(dev);
 		if (dev->power.status > DPM_ON) {
 			dev->power.status = DPM_ON;
@@ -735,6 +738,7 @@ static void dpm_complete(pm_message_t state)
 	}
 	list_splice(&list, &dpm_list);
 	mutex_unlock(&dpm_list_mtx);
+	temp_dev=NULL;
 }
 
 /**
@@ -748,7 +752,9 @@ void dpm_resume_end(pm_message_t state)
 {
 	might_sleep();
 	dpm_resume(state);
+	printk(" dpm_resume_end->dpm_complete+\n");
 	dpm_complete(state);
+	printk(" dpm_resume_end->dpm_complete-\n");
 }
 EXPORT_SYMBOL_GPL(dpm_resume_end);
 

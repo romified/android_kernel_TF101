@@ -175,9 +175,12 @@ static int tegra_fb_set_par(struct fb_info *info)
 
 	if (var->pixclock) {
 		struct tegra_dc_mode mode;
+		struct fb_videomode m;
+
+		fb_var_to_videomode(&m, var);
 
 		info->mode = (struct fb_videomode *)
-			fb_find_best_mode(var, &info->modelist);
+			fb_find_nearest_mode(&m, &info->modelist);
 		if (!info->mode) {
 			dev_warn(&tegra_fb->ndev->dev, "can't match video mode\n");
 			return -EINVAL;
@@ -271,6 +274,7 @@ static int tegra_fb_blank(int blank, struct fb_info *info)
 		return 0;
 
 	default:
+		printk("fb: unknown state, return -ENOTTY.\n");
 		return -ENOTTY;
 	}
 }
@@ -407,6 +411,13 @@ static int tegra_fb_set_windowattr(struct tegra_fb_info *tegra_fb,
 		win->flags |= TEGRA_WIN_FLAG_BLEND_PREMULT;
 	else if (flip_win->attr.blend == TEGRA_FB_WIN_BLEND_COVERAGE)
 		win->flags |= TEGRA_WIN_FLAG_BLEND_COVERAGE;
+	if (flip_win->attr.flags & TEGRA_FB_WIN_FLAG_INVERT_H)
+		win->flags |= TEGRA_WIN_FLAG_INVERT_H;
+	if (flip_win->attr.flags & TEGRA_FB_WIN_FLAG_INVERT_V)
+		win->flags |= TEGRA_WIN_FLAG_INVERT_V;
+	if (flip_win->attr.flags & TEGRA_FB_WIN_FLAG_TILED)
+		win->flags |= TEGRA_WIN_FLAG_TILED;
+
 	win->fmt = flip_win->attr.pixformat;
 	win->x = flip_win->attr.x;
 	win->y = flip_win->attr.y;
@@ -456,7 +467,8 @@ static int tegra_fb_set_windowattr(struct tegra_fb_info *tegra_fb,
 		nvhost_syncpt_wait_timeout(&tegra_fb->ndev->host->syncpt,
 					   flip_win->attr.pre_syncpt_id,
 					   flip_win->attr.pre_syncpt_val,
-					   msecs_to_jiffies(500));
+					   msecs_to_jiffies(500),
+					   NULL);
 	}
 
 
@@ -672,7 +684,7 @@ static struct fb_ops tegra_fb_ops = {
 
 void tegra_fb_update_monspecs(struct tegra_fb_info *fb_info,
 			      struct fb_monspecs *specs,
-			      bool (*mode_filter)(struct fb_videomode *mode))
+			      bool (*mode_filter)(const struct tegra_dc *dc, struct fb_videomode *mode))
 {
 	struct fb_event event;
 	struct fb_modelist *m;
@@ -698,7 +710,7 @@ void tegra_fb_update_monspecs(struct tegra_fb_info *fb_info,
 
 	for (i = 0; i < specs->modedb_len; i++) {
 		if (mode_filter) {
-			if (mode_filter(&specs->modedb[i]))
+			if (mode_filter(fb_info->win->dc, &specs->modedb[i]))
 				fb_add_videomode(&specs->modedb[i],
 						 &fb_info->info->modelist);
 		} else {
@@ -776,7 +788,7 @@ struct tegra_fb_info *tegra_fb_register(struct nvhost_device *ndev,
 	if (!tegra_fb->flip_wq) {
 		dev_err(&ndev->dev, "couldn't create flip work-queue\n");
 		ret = -ENOMEM;
-		goto err_delete_wq;
+		goto err_put_client;
 	}
 
 	if (fb_mem) {
@@ -786,7 +798,7 @@ struct tegra_fb_info *tegra_fb_register(struct nvhost_device *ndev,
 		if (!fb_base) {
 			dev_err(&ndev->dev, "fb can't be mapped\n");
 			ret = -EBUSY;
-			goto err_put_client;
+			goto err_delete_wq;
 		}
 		tegra_fb->valid = true;
 	}
@@ -862,10 +874,10 @@ struct tegra_fb_info *tegra_fb_register(struct nvhost_device *ndev,
 
 err_iounmap_fb:
 	iounmap(fb_base);
-err_put_client:
-	nvmap_client_put(tegra_fb->fb_nvmap);
 err_delete_wq:
 	destroy_workqueue(tegra_fb->flip_wq);
+err_put_client:
+	nvmap_client_put(tegra_fb->fb_nvmap);
 err_free:
 	framebuffer_release(info);
 err:

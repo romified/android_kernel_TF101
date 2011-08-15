@@ -312,7 +312,9 @@ static int __cpuinit _cpu_up(unsigned int cpu, int tasks_frozen)
 	}
 
 	/* Arch-specific enabling code. */
+	printk("_cpu_up+\n");
 	ret = __cpu_up(cpu);
+	printk("_cpu_up- ret=%x\n",ret );
 	if (ret != 0)
 		goto out_notify;
 	BUG_ON(!cpu_online(cpu));
@@ -323,6 +325,7 @@ static int __cpuinit _cpu_up(unsigned int cpu, int tasks_frozen)
 out_notify:
 	if (ret != 0)
 		__cpu_notify(CPU_UP_CANCELED | mod, hcpu, nr_calls, NULL);
+	printk("_cpu_up ret CPU_UP_CANCELED");
 	cpu_hotplug_done();
 
 	return ret;

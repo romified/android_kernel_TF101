@@ -32,6 +32,7 @@
 #include <linux/init.h>
 #include <linux/jiffies.h>
 #include <linux/slab.h>
+#include <linux/wakelock.h>
 #include <asm/uaccess.h>
 #include <asm/string.h>
 
@@ -103,6 +104,9 @@ static struct kobject *log_kobj;
 #define SC_RCV_BITS	(SC_RCV_B7_1|SC_RCV_B7_0|SC_RCV_ODDP|SC_RCV_EVNP)
 
 static int flag_time = HZ;
+static struct wake_lock ppp_rxwake; /* PPP rx wakelock */
+static struct wake_lock ppp_closewake;
+
 module_param(flag_time, int, 0);
 MODULE_PARM_DESC(flag_time, "ppp_async: interval between flagged packets (in clock ticks)");
 MODULE_LICENSE("GPL");
@@ -257,6 +261,10 @@ ppp_asynctty_close(struct tty_struct *tty)
 	skb_queue_purge(&ap->rqueue);
 	kfree_skb(ap->tpkt);
 	kfree(ap);
+	// This is to let user space be notified about ppp closure
+	printk( KERN_INFO "[PPP] Holding 3 secs wakelock for ppp close\n");
+	wake_lock_timeout(&ppp_closewake, 3 * HZ);
+
 }
 
 /*
@@ -466,6 +474,8 @@ ppp_async_init(void)
 
        printk( KERN_INFO "PPP Log initialized\n" );
 #endif /*def CONFIG_DEBUG_ASUS*/
+	wake_lock_init(&ppp_rxwake, WAKE_LOCK_SUSPEND, "ppp_rxwake");
+	wake_lock_init(&ppp_closewake, WAKE_LOCK_SUSPEND, "ppp_closewake");
 	err = tty_register_ldisc(N_PPP, &ppp_ldisc);
 	if (err != 0)
 		printk(KERN_ERR "PPP_async: error %d registering line disc.\n",
@@ -994,6 +1004,8 @@ ppp_async_input(struct asyncppp *ap, const unsigned char *buf,
 			}
 		}
 
+		wake_lock_timeout(&ppp_rxwake, HZ);
+
 		if (n >= count)
 			break;
 
@@ -1115,6 +1127,8 @@ static void __exit ppp_async_cleanup(void)
 #ifdef CONFIG_DEBUG_ASUS
        kobject_del( log_kobj );
 #endif /*def CONFIG_DEBUG_ASUS*/
+	wake_lock_destroy(&ppp_rxwake);
+	wake_lock_destroy(&ppp_closewake);
 	if (tty_unregister_ldisc(N_PPP) != 0)
 		printk(KERN_ERR "failed to unregister PPP line discipline\n");
 }

@@ -115,7 +115,6 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	 * Now bring the CPU into our world.
 	 */
 	ret = boot_secondary(cpu, idle);
-	printk("boot_secondary- ret=%u\n",ret );
 	if (ret == 0) {
 		unsigned long timeout;
 
@@ -142,7 +141,7 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	*pmd = __pmd(0);
 	clean_pmd_entry(pmd);
 	pgd_free(&init_mm, pgd);
-	printk("boot_secondary-- \n" );
+
 	if (ret) {
 		printk(KERN_CRIT "CPU%u: processor failed to boot\n", cpu);
 

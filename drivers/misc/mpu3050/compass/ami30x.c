@@ -43,6 +43,9 @@
 #include "mlos.h"
 
 #include <log.h>
+#include <linux/gpio.h>
+#include <../../../arch/arm/mach-tegra/gpio-names.h>
+#include <mach/board-ventana-misc.h>
 #undef MPL_LOG_TAG
 #define MPL_LOG_TAG "MPL-compass"
 
@@ -63,17 +66,27 @@
 
 #define AMI30X_CALIBRATION_PATH "/data/sensors/AMI304_Config.ini"
 
-static int gain_x = 100, gain_y = 100, gain_z = 100;
-static int offset_x = 0, offset_y = 0, offset_z = 0;
+static int gain_open_x = 100, gain_open_y = 100, gain_open_z = 100;
+static int gain_close_x = 100, gain_close_y = 100, gain_close_z = 100;
+static int offset_x = 100, offset_y = 100, offset_z = 100;
+static int ProjectID= 101;
 static bool flagLoadConfig = false;
+
 
 static int access_calibration_file(void)
 {
 	char buf[256];
-        int ret = 0;
+       int ret = 0;
 	struct file *fp = NULL;
 	mm_segment_t oldfs;
 	int data[23];
+
+	ret = ASUSGetProjectID();
+	if (ret == 102)
+	{
+		ProjectID=102;
+		printk("Compass: SL101 detected\n");
+	}
 
 	oldfs=get_fs();
 	set_fs(get_ds());
@@ -95,20 +108,47 @@ static int access_calibration_file(void)
 			&data[19], &data[20], &data[21],
 			&data[22]);
 
+	if (ProjectID == 102)
+	{
+		if (data[13]!=0 || data[14]!=0 || data[15]!=0)
+		{
+			offset_x = data[13] - data[10];
+			offset_y = data[14] - data[11];
+			offset_z = data[15] - data[12];
+		}
+		else
+		{
+			offset_x = -120;
+			offset_y = 372;
+			offset_z = -93;
+		}
+	}
+
 		printk("%d %d %d\n", data[19], data[20], data[21]);
 		if((data[19] > 150) || (data[19] < 50) ||
 		   (data[20] > 150) || (data[20] < 50) ||
 		   (data[21] > 150) || (data[21] < 50)){
-			gain_x = 100;
-			gain_y = 100;
-			gain_z = 100;
+			gain_open_x = 100;
+			gain_open_y = 100;
+			gain_open_z = 100;
 		}else{
-			gain_x = data[19];
-			gain_y = data[20];
-			gain_z = data[21];
+			gain_open_x = data[19];
+			gain_open_y = data[20];
+			gain_open_z = data[21];
 		}
-		printk("%d %d %d\n", gain_x, gain_y, gain_z);
-
+		printk("gain(open): %d %d %d\n", gain_open_x, gain_open_y, gain_open_z);
+		if((data[16] != 100) ||
+		   (data[17] > 150) || (data[17] < 50) ||
+		   (data[18] > 150) || (data[18] < 50)){
+			gain_close_x = 100;
+			gain_close_y = 100;
+			gain_close_z = 100;
+		}else{
+			gain_close_x = data[16];
+			gain_close_y = data[17];
+			gain_close_z = data[18];
+		}
+		printk("gain(close): %d %d %d\n", gain_close_x, gain_close_y, gain_close_z);
 		filp_close(fp, NULL);
 		set_fs(oldfs);
 		return 0;
@@ -199,9 +239,47 @@ int ami30x_read(void *mlsl_handle,
 					      AMI30X_BIT_CNTL3_F0RCE);
 		ERROR_CHECK(result);
 		//printk("%02x%02x %02x%02x %02x%02x\n", data[1], data[0], data[3], data[2], data[5], data[4]);
-		x =  ((short)(data[1] << 8 | data[0]))*gain_x/100;
-		y =  ((short)(data[3] << 8 | data[2]))*gain_y/100;
-		z =  ((short)(data[5] << 8 | data[4]))*gain_z/100;
+	if (ProjectID == 102)
+	{
+		if (gpio_get_value(TEGRA_GPIO_PS4) == 0) {
+				x =  ((short)(data[1] << 8 | data[0]))*gain_close_x/100;
+				y =  ((short)(data[3] << 8 | data[2]))*gain_close_y/100;
+				z =  ((short)(data[5] << 8 | data[4]))*gain_close_z/100;
+				if ( x >= 2047)
+					x = 2047;
+				if ( x < -2048)
+					x = -2048;
+			        if ( y >= 2047)
+		                        y = 2047;
+		                if ( y < -2048)
+		                        y = -2048;
+			        if ( z >= 2047)
+		                        z = 2047;
+		                if ( z < -2048)
+		                        z = -2048;
+		}
+		else{
+				x =  ((short)(data[1] << 8 | data[0]) + offset_x)*gain_open_x/100;
+				y =  ((short)(data[3] << 8 | data[2]) + offset_y)*gain_open_y/100;
+				z =  ((short)(data[5] << 8 | data[4]) + offset_z)*gain_open_z/100;
+				if ( x >= 2047)
+					x = 2047;
+				if ( x < -2048)
+					x = -2048;
+			        if ( y >= 2047)
+		                        y = 2047;
+		                if ( y < -2048)
+		                        y = -2048;
+			        if ( z >= 2047)
+		                        z = 2047;
+		                if ( z < -2048)
+		                        z = -2048;
+		}
+	}
+	else{
+		x =  ((short)(data[1] << 8 | data[0]))*gain_open_x/100;
+		y =  ((short)(data[3] << 8 | data[2]))*gain_open_y/100;
+		z =  ((short)(data[5] << 8 | data[4]))*gain_open_z/100;
 		if ( x >= 2047)
 			x = 2047;
 		if ( x < -2048)
@@ -215,6 +293,7 @@ int ami30x_read(void *mlsl_handle,
                 if ( z < -2048)
                         z = -2048;
 
+	}
 		//printk("x : %d y : %d z : %d\n", x, y, z);
 		data[0] = x & 0x000000FF;
 		data[1] = ( x & 0x0000FF00) >> 8;

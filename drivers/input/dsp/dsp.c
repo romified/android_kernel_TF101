@@ -43,6 +43,8 @@
 #define START_RECORDING 1
 #define END_RECORDING 0
 #define PLAYBACK 2
+#define INPUT_SOURCE_NORAML 	100
+#define INPUT_SOURCE_VR 			101
 
 #define DEVICE_NAME		"dsp_fm34"
 
@@ -66,6 +68,7 @@ struct i2c_client *fm34_client;
 struct fm34_chip *dsp_chip;
 bool bConfigured=false;
 int PID=0;
+int input_source=INPUT_SOURCE_NORAML;
 
 MODULE_DEVICE_TABLE(i2c, fm34_id);
 
@@ -142,7 +145,7 @@ int fm34_config_DSP(void)
 		if(ret == config_length){
 			FM34_INFO("DSP configuration is done\n");
 			bConfigured=true;
-		}	
+		}
 
 		msleep(100);
 	}
@@ -236,7 +239,6 @@ long fm34_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	switch(cmd){
 		case DSP_CONTROL:
 			fm34_config_DSP();
-
 			switch(arg){
 				case START_RECORDING:
 					gpio_set_value(TEGRA_GPIO_PH3, 1);
@@ -250,14 +252,38 @@ long fm34_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 						}else if(PID==102){
 							FM34_INFO("Start recording(AMIC, SL101), enable DSP\n");
 							ret = i2c_master_send(dsp_chip->client, (u8 *)enable_parameter_SL101_headset, sizeof(enable_parameter_SL101_headset));
+							if(input_source==INPUT_SOURCE_VR){
+								FM34_INFO("Disable Noise Suppression (for SL101 headset)\n");
+								ret = i2c_master_send(dsp_chip->client, (u8 *)SL101_headset_disable_NS, sizeof(SL101_headset_disable_NS));
+							}
+							else{
+								FM34_INFO("Enable Noise Suppression (for SL101 headset)\n");
+								ret = i2c_master_send(dsp_chip->client, (u8 *)SL101_headset_enable_NS, sizeof(SL101_headset_enable_NS));
+							}
 						}
 					}else{/*Handsfree mode*/
 						if(PID==101){
 							FM34_INFO("Start recording(DMIC), enable DSP\n");
 							ret = i2c_master_send(dsp_chip->client, (u8 *)enable_parameter, sizeof(enable_parameter));
+							if(input_source==INPUT_SOURCE_VR){
+								FM34_INFO("Disable Noise Suppression (for TF101)\n");
+								ret = i2c_master_send(dsp_chip->client, (u8 *)TF101_disable_NS, sizeof(TF101_disable_NS));
+							}
+							else{
+								FM34_INFO("Enable Noise Suppression (for TF101)\n");
+								ret = i2c_master_send(dsp_chip->client, (u8 *)TF101_enable_NS, sizeof(TF101_enable_NS));
+							}
 						}else if(PID==102){
 							FM34_INFO("Start recording(DMIC, SL101), enable DSP\n");
 							ret = i2c_master_send(dsp_chip->client, (u8 *)enable_parameter_SL101_default, sizeof(enable_parameter_SL101_default));
+							if(input_source==INPUT_SOURCE_VR){
+								FM34_INFO("Disable Noise Suppression (for SL101 default)\n");
+								ret = i2c_master_send(dsp_chip->client, (u8 *)SL101_default_disable_NS, sizeof(SL101_default_disable_NS));
+							}
+							else{
+								FM34_INFO("Enable Noise Suppression (for SL101 default)\n");
+								ret = i2c_master_send(dsp_chip->client, (u8 *)SL101_default_enable_NS, sizeof(SL101_default_enable_NS));
+							}
 						}
 					}
 					recording_enabled = START_RECORDING;
@@ -273,6 +299,12 @@ long fm34_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 					hs_micbias_power(0);
 					msleep(5);
 					gpio_set_value(TEGRA_GPIO_PH3, 0);
+					break;
+
+				case INPUT_SOURCE_NORAML:
+				case INPUT_SOURCE_VR:
+					FM34_INFO("Input source = %s\n", arg==INPUT_SOURCE_NORAML? "NORMAL" : "VR");
+					input_source=arg;
 					break;
 
 				case PLAYBACK:

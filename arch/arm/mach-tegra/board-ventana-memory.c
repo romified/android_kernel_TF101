@@ -822,8 +822,8 @@ static const struct tegra_emc_chip ASUS_hynix_ventana_emc_chips[] = {
 	{
 		.description = "Hynix 300MHz",
 		.mem_manufacturer_id = 0x0606,
-		.mem_revision_id1 = 0,
-		.mem_revision_id2 = 0,
+		.mem_revision_id1 = -1,
+		.mem_revision_id2 = -1,
 		.mem_pid = 0x5454,
 		.table = ventana_emc_tables_hynix_300Mhz,
 		.table_size = ARRAY_SIZE(ventana_emc_tables_hynix_300Mhz)
