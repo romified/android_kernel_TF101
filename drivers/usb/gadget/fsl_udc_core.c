@@ -112,7 +112,8 @@ static struct asus_charger *charger_info;
 
 static bool usb_cable_detect_init = false;
 static bool ac_connected = false;
-
+static int ac_14V_connected = 0;
+static unsigned limit_set1_irq;
 #if BATTERY_CALLBACK_ENABLED
 extern void battery_callback(unsigned cable_status);
 extern int asusec_is_ac_over_10v_callback(void);
@@ -1316,6 +1317,7 @@ static void usb_cable_detection(struct work_struct *w){
 #endif
 
 		ac_connected = false;
+		ac_14V_connected = 0;
 		wake_unlock(&charger_info->wake_lock);
 	} else if (!charger_info->udc_vbus_active && charger_info->is_active) {
 		/* Determine whether it is a USB cable or a AC adapter, set the cable status and report it to 
@@ -1336,6 +1338,7 @@ static void usb_cable_detection(struct work_struct *w){
 		if(!ac_connected){
 			printk(KERN_INFO "The USB cable is connected.\n");
 			charger_info->cable_status |= 1<<0; //0001
+			ac_14V_connected = 0;
 			gpio_limit_set0_set(0);
 		}else{
 			dock_in = gpio_get_value(TEGRA_GPIO_PX5);
@@ -1344,31 +1347,39 @@ static void usb_cable_detection(struct work_struct *w){
 				if(ret == 1){
 					printk(KERN_INFO"USB Adapter 14V connect\n");
 					charger_info->cable_status |= 1<<1|1<<0; //0011
+					ac_14V_connected =1;
 				}else if(ret == 0){
 					printk(KERN_INFO"USB Adapter 5V connect\n");
 					charger_info->cable_status |= 1<<0; //0001
+					ac_14V_connected = 0;
 				}else{
 					printk(KERN_ERR"No define Adapter status\n");
 					charger_info->cable_status |= 1<<0; //0001
+					ac_14V_connected = 0;
 				}
 			}else if(dock_in == 0){// dock in
 				if(asusec_is_ac_over_10v_callback() == 0x20){
 					printk(KERN_INFO"USB + Docking 14V connect\n");
 					charger_info->cable_status |= 1<<1|1<<0; //0011
+					ac_14V_connected = 1;
 				}else if(asusec_is_ac_over_10v_callback() == 0){
 					printk(KERN_INFO"USB + Docking 5V connect\n");
 					charger_info->cable_status |= 1<<0; //0001
+					ac_14V_connected = 0;
 				}else{
 					printk(KERN_INFO"unknown status\n");
 					if(ret == 1){
 						printk(KERN_INFO"LIMIT SET1: 14V connect\n");
 						charger_info->cable_status |= 1<<1|1<<0; //0011
+						ac_14V_connected = 1;
 					}else if(ret == 0){
 						printk(KERN_INFO"LIMIT SET1: 5V connect\n");
 						charger_info->cable_status |= 1<<0; //0001
+						ac_14V_connected = 0;
 					}else{
 						printk(KERN_ERR"LIMIT SET1 error status\n");
 						charger_info->cable_status |= 1<<0; //0001
+						ac_14V_connected = 0;
 					}
 				}
 			}else{
@@ -2800,6 +2811,33 @@ static int __init struct_ep_setup(struct fsl_udc *udc, unsigned char index,
 
 	return 0;
 }
+//add by yi-hsin for the issue of USB adaptor inserted half
+static irqreturn_t fsl_limit_set1_change_interrupt_handler(int irq, void *dev_id)
+{
+	int ret = 0;
+	ret = gpio_get_value(TEGRA_GPIO_PW1);
+	if(ac_connected && (ret != ac_14V_connected)){//no dock in
+		charger_info->cable_status &= (0<<3|0<<2|0<<1|0<<0); //0000
+		if(ret == 1){
+			printk(KERN_INFO"%s: USB Adapter 14V connect\n",__func__);
+			charger_info->cable_status |= 1<<1|1<<0; //0011
+			ac_14V_connected = 1;
+		}else if(ret == 0){
+			printk(KERN_INFO"%s: USB Adapter 5V connect\n",__func__);
+			charger_info->cable_status |= 1<<0; //0001
+			ac_14V_connected = 0;
+		}else{
+			printk(KERN_ERR"%s: No define Adapter status\n",__func__);
+			charger_info->cable_status |= 1<<0; //0001
+			ac_14V_connected = 0;
+		}
+#if BATTERY_CALLBACK_ENABLED
+		battery_callback(charger_info->cable_status);
+#endif
+	}
+
+	return IRQ_HANDLED;
+}
 
 /* Driver probe function
  * all intialization operations implemented here except enabling usb_intr reg
@@ -2812,6 +2850,7 @@ static int __init fsl_udc_probe(struct platform_device *pdev)
 	int ret = -ENODEV;
 	unsigned int i;
 	u32 dccparams;
+	int rc = 0 ;
 #if defined(CONFIG_ARCH_TEGRA)
 	struct resource *res_sys = NULL;
 #endif
@@ -2992,6 +3031,13 @@ static int __init fsl_udc_probe(struct platform_device *pdev)
 		gpio_limit_set0_set(0);
 	}
 	spin_unlock(&usb_bus_active_lock);
+
+	limit_set1_irq = gpio_to_irq(TEGRA_GPIO_PW1);
+	rc = request_irq(limit_set1_irq, fsl_limit_set1_change_interrupt_handler,IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING, "Limit_SET1_Detect", udc_controller);
+	if (rc < 0) {
+		printk(KERN_ERR"%s: Could not register for Limit_SET1_Detect interrupt, irq = %d, rc = %d\n",__func__, limit_set1_irq, rc);
+	}
+	printk(KERN_INFO"%s: request irq = %d, rc = %d\n",__func__, limit_set1_irq, rc);
 	 //disable the init  volume up+down gpio request because the gpio  init before usb driver init
 	/*tegra_gpio_enable(TEGRA_GPIO_PQ4);
 	tegra_gpio_enable(TEGRA_GPIO_PQ5);
@@ -3038,6 +3084,7 @@ static int __exit fsl_udc_remove(struct platform_device *pdev)
 	if (udc_controller->transceiver)
 		otg_set_peripheral(udc_controller->transceiver, NULL);
 
+	free_irq(limit_set1_irq, udc_controller);
 	fsl_udc_clk_release();
 
 	/* DR has been stopped in usb_gadget_unregister_driver() */

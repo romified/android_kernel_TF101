@@ -326,8 +326,8 @@ static unsigned mmc_sdio_get_max_clock(struct mmc_card *card)
 	switch (ASUSGetProjectID()) {
 
 	case 102:
-		max_dtr = 45000000;
-		printk("Set SDIO clock to 45MHz\n");
+		max_dtr = 36000000;
+		printk("Set SDIO clock to 36MHz\n");
 		break;
 
 	case 101:

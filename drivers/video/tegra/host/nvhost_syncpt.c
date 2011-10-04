@@ -27,6 +27,9 @@
 #define syncpt_to_dev(sp) container_of(sp, struct nvhost_master, syncpt)
 #define SYNCPT_CHECK_PERIOD 2*HZ
 
+static int timeout_count =0;
+static unsigned int old_sec;
+
 static bool check_max(struct nvhost_syncpt *sp, u32 id, u32 real)
 {
 	u32 max;
@@ -225,10 +228,28 @@ int nvhost_syncpt_wait_timeout(struct nvhost_syncpt *sp, u32 id,
 		if (timeout != NVHOST_NO_TIMEOUT)
 			timeout -= check;
 		if (timeout) {
+			static struct timeval t_new_stuck;
+
 			dev_warn(&syncpt_to_dev(sp)->pdev->dev,
 				"syncpoint id %d (%s) stuck waiting %d\n",
 				id, nvhost_syncpt_name(id), thresh);
 			nvhost_syncpt_debug(sp);
+
+			do_gettimeofday(&t_new_stuck);
+			if ((t_new_stuck.tv_sec - old_sec) > 1) {
+				printk("%s: Long time no C. (new, old) = (%d, %d)\n", __FUNCTION__, t_new_stuck.tv_sec, old_sec);
+				timeout_count = 1;
+			} else {
+				timeout_count++;
+				printk("%s: Busy timeout? (%d)", __FUNCTION__, timeout_count);
+			}
+			old_sec = t_new_stuck.tv_sec;
+
+			if (timeout_count >= 3) {
+				dev_warn(&syncpt_to_dev(sp)->pdev->dev,
+				"Timeout too many times. Force panic()!!\n");
+				panic("Force panic from %s", __FUNCTION__);
+			}
 		}
 	};
 	nvhost_intr_put_ref(&(syncpt_to_dev(sp)->intr), ref);

@@ -196,13 +196,14 @@
 #define ASUSEC_EC_ON	1
 #define ASUSEC_EC_OFF	0
 #define ASUSEC_IOC_MAGIC	0xf4
-#define ASUSEC_IOC_MAXNR	6
+#define ASUSEC_IOC_MAXNR	7
 #define ASUSEC_POLLING_DATA _IOR(ASUSEC_IOC_MAGIC,	1,	int)
 #define ASUSEC_FW_UPDATE 	_IOR(ASUSEC_IOC_MAGIC,	2,	int)
 #define ASUSEC_CPASLOCK_LED	_IOR(ASUSEC_IOC_MAGIC,	3,	int)
 #define ASUSEC_INIT			_IOR(ASUSEC_IOC_MAGIC,	4,	int)
 #define ASUSEC_TP_CONTROL	_IOR(ASUSEC_IOC_MAGIC,	5,	int)
 #define ASUSEC_EC_WAKEUP	_IOR(ASUSEC_IOC_MAGIC,	6,	int)
+#define ASUSEC_FW_DUMMY		_IOR(ASUSEC_IOC_MAGIC,	7,	int)
 
 /*************IO control setting***************/
 

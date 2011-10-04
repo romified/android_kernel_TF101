@@ -820,11 +820,17 @@ static int nvhost_suspend(struct platform_device *pdev, pm_message_t state)
 		nvhost_syncpt_save(&host->syncpt);
 		clk_disable(host->mod.clk[0]);
 		dev_info(&pdev->dev, "suspended\n");
+		war_count = 0;
 		return 0;
 	} else {
 		war_count++;
-		printk("nvhost_suspend workaround for \"%s\" is triggerred (count= %d).\n", host->mod.name, war_count);
-		return 1; /* 1 stands for "error". */
+		if (war_count >= 2) {
+			dev_info(&pdev->dev, "Busy triggering the workaround (count= %d)? Force BUG_ON()!!\n", war_count);
+			BUG_ON(true);
+		} else {
+			dev_info(&pdev->dev, "nvhost_suspend workaround for \"%s\" is triggered (count= %d).\n", host->mod.name, war_count);
+			return 1; /* 1 stands for "error". */
+		}
 	}
 }
 

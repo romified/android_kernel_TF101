@@ -37,17 +37,6 @@
 #define SDHCI_VENDOR_CLOCK_CNTRL       0x100
 #define is_card_mmc(_card) \
 ((_card) && ((_card)->type == MMC_TYPE_MMC))
-struct tegra_sdhci_host {
-	struct sdhci_host *sdhci;
-	struct clk *clk;
-	int clk_enabled;
-	bool card_always_on;
-	u32 sdhci_ints;
-	int wp_gpio;
-	int card_present;
-	int cd_gpio;
-	int cd_gpio_polarity;
-};
 
 static irqreturn_t carddetect_irq(int irq, void *data)
 {
@@ -93,6 +82,13 @@ static void tegra_sdhci_set_clock(struct sdhci_host *sdhci, unsigned int clock)
 		mmc_hostname(sdhci->mmc), clock, host->clk_enabled);
 
 	tegra_sdhci_enable_clock(host, clock);
+
+	if(!strcmp(mmc_hostname(sdhci->mmc), "mmc2") && clock) {
+		clk_set_rate(host->clk, clock);
+		sdhci->max_clk = clk_get_rate(host->clk);
+		printk( "%s clock request: %uKHz. currently "
+			"%uKHz\n", mmc_hostname(sdhci->mmc), clock/1000, sdhci->max_clk/1000);
+	}
 }
 
 static int tegra_sdhci_card_detect(struct sdhci_host *sdhost)

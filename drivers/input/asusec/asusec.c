@@ -1982,6 +1982,13 @@ static long asusec_ioctl(struct file *flip,
 				ASUSEC_ERR("Unknown argument");
 				return -ENOTTY;
 			}
+		case ASUSEC_FW_DUMMY:
+			ASUSEC_NOTICE("ASUSEC_FW_DUMMY\n");
+			ec_chip->i2c_dm_data[0] = 0x02;
+			ec_chip->i2c_dm_data[1] = 0x55;
+			ec_chip->i2c_dm_data[2] = 0xAA;
+			asusec_dockram_write_data(0x40,3);
+			return 0;
         default: /* redundant, as cmd was checked against MAXNR */
             return -ENOTTY;
 	}
@@ -2092,7 +2099,7 @@ static ssize_t ec_write(struct file *file, const char __user *buf, size_t count,
         ASUSEC_ERR("ec_write copy error\n");
         return err;
     }
-   
+
     h2ec_count = count;
     //ASUSEC_INFO("ec_write (%d)\n",count);
     for (i = 0; i < count ; i++) 

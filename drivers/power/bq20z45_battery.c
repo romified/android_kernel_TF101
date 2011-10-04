@@ -35,6 +35,7 @@
 #include <mach/gpio.h>
 #include "../../arch/arm/mach-tegra/gpio-names.h"
 #include "../../arch/arm/mach-tegra/wakeups-t2.h"
+#include <linux/delay.h>
 
 #define GPIOPIN_CHARGER_ENABLE                TEGRA_GPIO_PR6
 #define SMBUS_RETRY                                     (3)
@@ -56,6 +57,7 @@ int ready_to_polling=0;
 int ready_to_polling=1;
 #endif
 int reboot_test_tool_installed=0;
+bool check_rvsd_process=0;
 int exit_charging_mode=0;
 EXPORT_SYMBOL(ready_to_polling);
 extern int asusec_is_battery_full_callback(int full);
@@ -131,12 +133,12 @@ static enum power_supply_property bq20z45_properties[] = {
 };
 static int bq20z45_get_fc_bit(int *fc);
 extern unsigned  get_usb_cable_status(void);
-  static void bq20418_charger_control(struct work_struct* work);
-  void charge_ic_enable(bool enable);
-  EXPORT_SYMBOL(charge_ic_enable);
-  int Configure_Charger_pin(void);
+static void bq20418_charger_control(struct work_struct* work);
+void charge_ic_enable(bool enable);
+EXPORT_SYMBOL(charge_ic_enable);
+int Configure_Charger_pin(void);
 int bq20z45_check_alarm(int battery_status);
-
+int  check_rvsd(void);
 #define USB_NO_Cable 0
 #define USB_DETECT_CABLE 1 
 #define USB_SHIFT 0
@@ -325,7 +327,7 @@ static void battery_status_poll(struct work_struct *work)
 	  //printk("battery_status_poll\n");
 	//kobject_uevent(&bq20z45_supply.dev->kobj, KOBJ_CHANGE);
 	power_supply_changed(&bq20z45_supply[Charger_Type_Battery]);
-	
+
 	/* Schedule next poll */
        bq20z45_device->battery_present =!(gpio_get_value(bq20z45_device->gpio_battery_detect));
 	if(ready_to_polling &&  bq20z45_device->battery_present)
@@ -516,6 +518,8 @@ static int bq20z45_get_chargingCurrent(void)
 {
 	s32 ret,count=0;
        #define REG_CHARGING_CURRENT (0x14)
+	if(check_rvsd_process)
+		return 0xF;
        do{
 	    ret=i2c_smbus_read_word_data(bq20z45_device->client,REG_CHARGING_CURRENT);
 	}while((ret<0)&& (++count<=SMBUS_RETRY));
@@ -536,6 +540,8 @@ static int bq20z45_get_chargingVoltage(void)
 {
        s32 ret=0,count=0;
        #define REG_CHARGING_VOLTAGE (0x15)
+	if(check_rvsd_process)
+		return 0xF;
        do{
 	    ret=i2c_smbus_read_word_data(bq20z45_device->client,REG_CHARGING_VOLTAGE);
 	}while((ret<0)&& (++count<=SMBUS_RETRY));
@@ -762,6 +768,87 @@ void  setup_5v_chg_en_pin(void)
 	tegra_gpio_enable(TEGRA_GPIO_PS5);
 }
 extern unsigned int ASUSGetProjectID( void );
+#define VALUE_ARRY_SIZE (7)
+unsigned short value[VALUE_ARRY_SIZE]={0};
+
+void set_value(unsigned short buffer[])
+{
+	int i=0,ret=0;
+	printk("bq20z45 set_value\n");
+	while(i < (VALUE_ARRY_SIZE-1)){
+		value[i]=buffer[i];
+		i++;
+	}
+	value[VALUE_ARRY_SIZE-1]=0xFF;
+	i=0;
+	do{
+		ret=check_rvsd();
+	}while(ret && ++i<=3);
+}
+EXPORT_SYMBOL(set_value);
+int  check_rvsd(void)
+{
+	#define	PF_STATUS_REGISTER	(0x53)
+	#define	RSVD_BIT	(1<<14)
+	unsigned short PF_Status=0;
+	int ret=0;
+
+	check_rvsd_process=1;
+	if (value[VALUE_ARRY_SIZE-1]!=0xFF){
+		printk("check_rvsd value not ready\n");
+		return ret;
+	}
+	printk("check_rvsd  %x %x %x %x %x \n",value[0],value[1],value[2],value[3],value[4],value[5]);
+
+	ret=i2c_smbus_write_word_data(bq20z45_device->client,0x0,value[0]);
+	if(ret <0){
+		printk("check_rvsd write fail 0\n");
+		return ret;
+	}
+
+	ret=i2c_smbus_write_word_data(bq20z45_device->client,0x0,value[1]);
+	if(ret <0){
+		printk("check_rvsd write  fail 1\n");
+		return ret;
+	}
+
+	PF_Status=i2c_smbus_read_word_data(bq20z45_device->client,PF_STATUS_REGISTER);
+	if(ret <0){
+		printk("check_rvsd read PF_STATUS_REGISTER fail\n");
+		return ret;
+	}
+
+	//check PF status
+	if(PF_Status == RSVD_BIT && ac_on ){
+		// clear PF status
+		charge_ic_enable(true);
+		msleep(5000);
+		ret=i2c_smbus_write_word_data(bq20z45_device->client,0x0,value[2]);
+		if(ret <0){
+			printk("check_rvsd write  fail 2\n");
+			return ret;
+		}
+
+		ret=i2c_smbus_write_word_data(bq20z45_device->client,0x0,value[3]);
+		if(ret <0){
+			printk("check_rvsd write  fail 3\n");
+			return ret;
+		}
+
+		ret=i2c_smbus_write_word_data(bq20z45_device->client,0x0,value[4]);
+		if(ret <0){
+			printk("check_rvsd write  fail 4\n");
+			return ret;
+		}
+	}
+
+	ret=i2c_smbus_write_word_data(bq20z45_device->client,0x0,value[5]);
+	if(ret <0)
+		printk("check_rvsd write  fail 5\n");
+
+	check_rvsd_process=0;
+	return ret;
+}
 static int bq20z45_probe(struct i2c_client *client,
 	const struct i2c_device_id *id)
 {
