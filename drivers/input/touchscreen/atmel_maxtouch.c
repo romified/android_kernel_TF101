@@ -2232,6 +2232,10 @@ void process_T9_message(u8 *message, struct mxt_data *mxt, int last_touch)
 						 fingerInfo[i].x);
 				input_report_abs(mxt->input, ABS_MT_POSITION_Y,
 						 fingerInfo[i].y);
+				input_report_abs(mxt->input, ABS_MT_PRESSURE,
+						 fingerInfo[i].pressure);
+				input_report_key(mxt->input, BTN_TOUCH,
+						 (fingerInfo[i].pressure == 0) ? 0 : 1 );
 				input_mt_sync(mxt->input);
 			if(d_flag==1)
 				printk("Touch: In last_touch decision, stored_size[%d]=%d, stored_x[%d]=%d, stored_y[%d]=%d\n",i,stored_size[i],i,stored_x[i],i,stored_y[i]);
